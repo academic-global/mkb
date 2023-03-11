@@ -1,0 +1,123 @@
+
+The following code is for the second stage modeling in which MKBs identified as outlying in the first step have been removed.  
+
+
+1. We begin by uploading the libraries
+
+```{r}
+library(dplyr)
+library(readxl)
+library(tidyverse)
+library(tidytext)
+library(tidyr)
+library(stm)
+library(reshape2)
+
+```
+
+
+```{r}
+
+
+library(rsvd)
+library(Rtsne)
+library(geometry)
+library(ggplot2)
+library(openxlsx)
+library(doParallel)
+library(stm)
+```
+
+
+2. Create a Subset of files for Stage 2 modeling  
+```{r}
+mkb<- read_excel("data/mkb_cleaned_excel.xlsx")
+
+mkb$date= as.Date(mkb$date, format = "%Y-%m-%d")
+
+mkb2<- subset(mkb, date!= "2015-01-01" & date != "2014-10-01" & date != "2015-02-01"& date != "2016-01-01" & date != "2017-02-01"& date != "2020-03-01" & date != "2020-04-01"& date != "2020-05-01" & date != "2020-07-01" & date != "2021-04-01" & date != "2021-05-01" & date != "2021-06-01")
+
+```
+
+
+3. Create a list of stopwords
+```{r}
+my_stop_words1<- bind_rows(stop_words, tibble(word = c("â", "à", "ji", "countrymen", "ki", "baat", "mann","sir", "indiaâ", "indiaâ", "pm","namaskar","iâ","dear", "friends", "µà","itâ","ªà", "modi", "baatâ", "shri", "œà","oneâ", "countryâ", "peopleâ","thatâ", "ve", "letâ", "jiâ", "ƒ", "ll", "narendra", "todayâ", "œmann", "dayâ", "youâ", "ƒà", "ªà", "youâ", "prime", "prime minister", "namaste", as.character(1:12)), lexicon = rep("custom", 54)))
+```
+
+4. Unnest the tokens, remove stopwords, and create wordStems
+
+```{r}
+mkb2_desc<- mkb2 %>%
+    unnest_tokens(word, text)%>%
+    anti_join(my_stop_words1)%>%
+   mutate(word = wordStem(word))
+```
+
+
+5. Make a document feature matrix
+```{r}
+mkb2_dfm <- mkb2_desc %>%
+  count(date, word) %>%
+  cast_dfm(date, word, n)
+```
+
+6. We tried various values of K, including the Lee-Mimno method, and charted them out. 
+ We finally settled on K= 20  
+
+```{r}
+#mkb2_lee_mmino<- stm(mkb2_dfm, init.type = "Spectral", K=0, verbose =T, seed= 1234)
+```
+
+
+
+```{r}
+library(furrr)
+#library(future)
+plan(multicore, workers =5)
+
+ksearch_mkb2<- searchK(mkb2_dfm, K = c(10: 50), init.type = "Spectral", N = 10, proportion = 0.5,heldout.seed = 1234, M = 10, seed =T)
+
+plot.searchK(ksearch_mkb2)
+
+#save.image("mkb_second_stm_Git.Rdata")
+#save(ksearch_mkb2, file = "ksearch_mkb2_git.Rdata")
+```
+
+
+
+```{r}
+#select k=20 for this second level model. 
+
+mkb2_stm20<- stm(mkb2_dfm, init.type = "Spectral", K=20, verbose =T, seed= 1234)
+```
+
+#Generate various graphics for the second-stage model (STM, k = 20) 
+
+
+```{r}
+
+#Make an STM input object
+docs2_dfm<- convert(mkb2_dfm, to = "stm")
+
+# Topic quality 
+topicQuality(mkb2_stm20, docs2_dfm$documents)
+
+# Major topics by document/talk
+topics_by_document_mkb2_stm20<-mkb2_stm20 %>%
+  tidy(matrix= "gamma", document_names = rownames(mkb2_dfm)) %>%
+group_by(document) %>%
+  slice_max(gamma, n=4)
+
+#Various types of labels for the topics
+labelTopics(mkb2_stm20)
+
+# Plot the top ten frex words in each topic
+plot(mkb2_stm20, n=10, labeltype ="frex", main= "Step Two: Topics for K=20", type = "summary", xlim = c(0, .2))
+
+# project on principal compnents using LDAvis (Remember, LDAvis does not preserve STM topic numbers)
+toLDAvis(mkb2_stm20, docs2_dfm$documents)
+
+```
+
+\
